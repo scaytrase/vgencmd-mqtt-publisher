@@ -5,7 +5,7 @@ Gather stats with vgencmd and publish them to the MQTT in Home Assistant compati
 
 1. Checkout
 2. pip install -r requirements.txt
-3. ln -s <path-to>/publisher.py /usr/bin/mqtt-publisher
+3. ln -s <path-to>/publisher.py /usr/bin/mqtt-sensors
 4. cp mqtt-sensors.service /etc/systemd/system/mqtt-sensors.service
 5. systemctl edit mqtt-sensors.service
 
