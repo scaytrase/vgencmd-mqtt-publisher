@@ -4,10 +4,10 @@ Gather stats with vgencmd and publish them to the MQTT in Home Assistant compati
 # Installation
 
 1. Checkout
-2. pip install -r requirements.txt
-3. ln -s `pwd`/publisher.py /usr/bin/mqtt-sensors
-4. cp mqtt-sensors.service /etc/systemd/system/mqtt-sensors.service
-5. systemctl edit mqtt-sensors.service
+2. `pip install -r requirements.txt`
+3. ```ln -s `pwd`/publisher.py /usr/bin/mqtt-sensors```
+4. `cp mqtt-sensors.service /etc/systemd/system/mqtt-sensors.service`
+5. `systemctl edit mqtt-sensors.service`
 
 ```
 [Service]
@@ -21,8 +21,8 @@ Environment="WAIT_TIME_SECONDS=15"
 Environment="TRACKED_MOUNTS=root:/;docker:/docker"
 ```
 
-6. systemctl enable mqtt-sensors.service
-7. systemctl start mqtt-sensors.service
+6. `systemctl enable mqtt-sensors.service`
+7. `systemctl start mqtt-sensors.service`
 8. Enjoy
 
 # Testing
