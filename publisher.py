@@ -235,7 +235,6 @@ def configure_device():
             "icon": "mdi:clock",
             "state_topic": get_state_topic(),
             "device_class": "timestamp",
-            "unit_of_measurement": "°C", 
             "value_template": "{{ value_json.last_boot}}",
             "enabled_by_default": True,
         }, default=dumper), qos=1, retain=True
