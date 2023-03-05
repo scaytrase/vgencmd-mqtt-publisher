@@ -13,7 +13,12 @@ import paho.mqtt.client as mqtt
 import pytz
 import json
 from pytz import timezone
+import logging
+from systemd.journal import JournalHandler
 
+log = logging.getLogger("mqtt-publisher")
+log.addHandler(JournalHandler())
+log.setLevel(logging.INFO)
 
 # Config
 broker_url = os.getenv('MQTT_HOST') #MQTT server IP
@@ -36,13 +41,38 @@ psutil.PROCFS_PATH = PROCFS_PATH
 UTC = pytz.utc
 SYSFILE = '/sys/devices/platform/soc/soc:firmware/get_throttled'
 
+mqtt.Client.connected_flag=False
+
+def on_connect(client, userdata, flags, rc):
+    log.info("Connect callback RC: " + str(rc))
+
+    if rc==0:
+        log.info("Connected")
+        client.connected_flag = True
+        log.info("Sending initial data on connect")
+
+        configure_device()
+        update_sensors()
+
+        log.info("Sent initial data on connect")
+    else:
+        log.info("Bad connection")
+        client.connected_flag = False
+
+def on_disconnect(client, userdata, rc):
+    log.info("Disconnected")    
+    client.connected_flag = False
+
 client = mqtt.Client()
 client.username_pw_set(broker_user, broker_pass)
+client.on_connect = on_connect  
+client.on_disconnect = on_disconnect
 
 class ProgramKilled(Exception):
     pass
 
 def signal_handler(signum, frame):
+    client.disconnect()
     raise ProgramKilled
 
 class Job(threading.Thread):
@@ -79,6 +109,12 @@ def get_last_boot():
     return str(as_local(utc_from_timestamp(psutil.boot_time())).isoformat())
 
 def update_sensors():
+    if not client.connected_flag:
+        log.info("Publishing device status skipped: not connected")
+        return
+
+    log.info("Publishing device status")
+
     mounts = {}
     
     for pair in trackedMounts.split(";"):
@@ -97,10 +133,13 @@ def update_sensors():
             "memory_use": get_memory_usage(),
             "cpu_usage": get_cpu_usage(),
             "power_status": get_rpi_power_status(),
+            "power_status_value": get_rpi_power_status_value(),
             "last_boot": get_last_boot(),
         }),
         qos=1, retain=False
     )
+
+    log.info("Publishing device status done")
 
 def get_temp():
     temp = check_output([VCGENCMD,"measure_temp"]).decode("UTF-8")
@@ -120,9 +159,15 @@ def get_memory_usage():
 def get_cpu_usage():
     return str(psutil.cpu_percent(interval=None))
 
-def get_rpi_power_status():
+def get_rpi_power_status_value():
     _throttled = open(SYSFILE, 'r').read()[:-1]
     _throttled = _throttled[:4]
+    
+    return _throttled
+
+def get_rpi_power_status():
+    _throttled = get_rpi_power_status_value()
+
     if _throttled == '0':
         return 'OK'
     elif _throttled == '1000':
@@ -144,6 +189,12 @@ def get_state_topic():
     return "homeassistant/sensor/"+ deviceName +"/state"
 
 def configure_device(): 
+    if not client.connected_flag:
+        log.info("Publishing device config skipped: not connected")
+        return
+
+    log.info("Publishing device config")
+
     deviceInfo = {
         "identifiers": [deviceName],
         "name": deviceName,
@@ -227,6 +278,19 @@ def configure_device():
     )
 
     client.publish(
+        topic="homeassistant/sensor/"+ deviceName +"/power_status_value/config",  
+        payload=json.dumps({
+            "unique_id": deviceName + "_power_status_value",
+            "device": deviceInfo,
+            "name": deviceName + " Power Status (Numeric)",
+            "icon": "mdi:power-plug",
+            "state_topic": get_state_topic(),
+            "value_template": "{{ value_json.power_status_value}}",
+            "enabled_by_default": True,
+        }, default=dumper), qos=1, retain=True
+    )
+
+    client.publish(
         topic="homeassistant/sensor/"+ deviceName +"/last_boot/config",  
         payload=json.dumps({
             "unique_id": deviceName + "_last_boot",
@@ -240,6 +304,8 @@ def configure_device():
         }, default=dumper), qos=1, retain=True
     )
 
+    log.info("Publishing device config done")
+
 def dumper(obj):
     try:
         return obj.toJSON()
@@ -247,23 +313,35 @@ def dumper(obj):
         return obj.__dict__
 
 if __name__ == "__main__":
+    log.info("Initializing signals")
+
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
-    client.connect(broker_url, broker_port)
-    
-    configure_device()
-    update_sensors()
 
-    job = Job(interval=timedelta(seconds=WAIT_TIME_SECONDS), execute=update_sensors)
-    job.start()
+    log.info("Trying to connect: host " + str(broker_url) + " port " + str(broker_port))
+
+    client.connect(broker_url, port=broker_port, keepalive=60)
+    
+    log.info("Continue configuration")
+
+    device = Job(interval=timedelta(seconds=60 * 10), execute=configure_device)
+    sensors = Job(interval=timedelta(seconds=WAIT_TIME_SECONDS), execute=update_sensors)
+
+    device.start()
+    sensors.start()
+
+    log.info("Jobs started")
+    log.info("Starting loop")
+
     client.loop_forever()
    
     while True:
             try:
                 time.sleep(1)
             except ProgramKilled:
-                print ("Program killed: running cleanup code")
+                log.info("Stopping")
                 sys.stdout.flush()
-                job.stop()
+                device.terminate()
+                sensors.terminate()
                 break
     
