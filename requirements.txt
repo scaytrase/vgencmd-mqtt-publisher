@@ -1,3 +1,4 @@
 pytz
 paho-mqtt
 psutil
+systemd-python
